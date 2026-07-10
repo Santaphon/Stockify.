@@ -138,13 +138,20 @@ export default function Transactions() {
         quantity: parsedQty
       }]);
 
-      if (type === 'OUT' && (product.current_qty - parsedQty) <= 5) {
+      // 🎯 ดึงค่าแจ้งเตือนขั้นต่ำจากฐานข้อมูล (ถ้าไม่ได้ตั้งไว้ ให้ถือว่าเป็น 0)
+      // ⚠️ เปลี่ยนคำว่า min_stock ให้ตรงกับชื่อคอลัมน์ใน Supabase ของคุณนะครับ
+      const alertThreshold = product.min_stock || 0; 
+      
+      const remainingQty = product.current_qty - parsedQty;
+
+      // 🎯 เปลี่ยนจากเลข 5 เป็นตัวแปร alertThreshold ที่ดึงมาจากฐานข้อมูล
+      if (type === 'OUT' && remainingQty <= alertThreshold) {
         try {
           await fetch('/api/line', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              message: `⚠️ แจ้งเตือนสต็อกใกล้หมด!\n📦 สินค้า: ${product.name}\n🔑 SKU: ${product.sku}\n📉 คงเหลือเพียง: ${product.current_qty - parsedQty} ชิ้น\nโปรดสั่งซื้อเพิ่มครับ`
+              message: `⚠️ แจ้งเตือนสต็อกต่ำกว่ากำหนด!\n📦 สินค้า: ${product.name}\n🔑 SKU: ${product.sku}\n📉 คงเหลือ: ${remainingQty} ชิ้น\n(ตั้งเตือนขั้นต่ำไว้ที่: ${alertThreshold} ชิ้น)\nรีบสั่งซื้อเพิ่มด่วนเลยครับ!`
             })
           });
         } catch (err) {
