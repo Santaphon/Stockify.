@@ -107,6 +107,28 @@ export default function Transactions() {
         quantity: parsedQty
       }]);
 
+      await supabase.from('transactions').insert([{
+        product_id: product.id,
+        transaction_type: type,
+        quantity: parsedQty
+      }]);
+
+      // 📢 ส่วนที่เพิ่มใหม่: ตรวจสอบและยิงแชท LINE ถ้าเบิกออกแล้วเหลือ <= 5
+      if (type === 'OUT' && newQty <= 5) {
+        try {
+          await fetch('/api/line', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: `⚠️ แจ้งเตือนสต็อกใกล้หมด!\n📦 สินค้า: ${product.name}\n🔑 SKU: ${product.sku}\n📉 คงเหลือเพียง: ${newQty} ชิ้น\nโปรดสั่งซื้อเพิ่มครับ`
+            })
+          });
+        } catch (err) {
+          console.error("LINE Notify Error:", err);
+        }
+      }
+
+      alert('บันทึกรายการสำเร็จ!');
       alert('บันทึกรายการสำเร็จ!');
       setSku('');
       setSearchTerm('');
