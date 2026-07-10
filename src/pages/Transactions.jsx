@@ -71,12 +71,18 @@ export default function Transactions() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // 🛡️ 1. ยามเฝ้าประตู: ถ้ากำลังโหลดอยู่ ให้หยุดการทำงานทันที (ป้องกันกดรัว/กดเบิ้ล)
+    if (loading) return;
+
     if (!sku || !quantity) return alert('กรุณากรอกข้อมูลให้ครบถ้วน');
     
     const parsedQty = parseInt(quantity);
     if (isNaN(parsedQty) || parsedQty <= 0) return alert('จำนวนต้องมากกว่า 0');
 
+    // 🛡️ 2. ล็อกปุ่มทันทีก่อนเริ่มคุยกับฐานข้อมูล
     setLoading(true);
+    
     try {
       let { data: product } = await supabase.from('products').select('*').eq('sku', sku.toUpperCase()).single();
 
@@ -99,45 +105,29 @@ export default function Transactions() {
          newQty -= parsedQty;
       }
 
+      // อัปเดตยอดคงเหลือ
       await supabase.from('products').update({ current_qty: newQty }).eq('id', product.id);
 
+      // บันทึกประวัติ
       await supabase.from('transactions').insert([{
         product_id: product.id,
         transaction_type: type,
         quantity: parsedQty
       }]);
 
-      await supabase.from('transactions').insert([{
-        product_id: product.id,
-        transaction_type: type,
-        quantity: parsedQty
-      }]);
-
-      // 📢 ส่วนที่เพิ่มใหม่: ตรวจสอบและยิงแชท LINE ถ้าเบิกออกแล้วเหลือ <= 5
-      if (type === 'OUT' && newQty <= 5) {
-        try {
-          await fetch('/api/line', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              message: `⚠️ แจ้งเตือนสต็อกใกล้หมด!\n📦 สินค้า: ${product.name}\n🔑 SKU: ${product.sku}\n📉 คงเหลือเพียง: ${newQty} ชิ้น\nโปรดสั่งซื้อเพิ่มครับ`
-            })
-          });
-        } catch (err) {
-          console.error("LINE Notify Error:", err);
-        }
-      }
-
       alert('บันทึกรายการสำเร็จ!');
-      alert('บันทึกรายการสำเร็จ!');
+      
+      // ล้างค่าฟอร์ม
       setSku('');
       setSearchTerm('');
       setQuantity(''); 
       fetchProducts();
       fetchHistory();
+      
     } catch (error) {
       alert('ข้อผิดพลาด: ' + error.message);
     } finally {
+      // 🛡️ 3. ปลดล็อกปุ่มเมื่อทำงานทุกอย่างเสร็จสิ้น (หรือเกิด Error)
       setLoading(false);
     }
   };
