@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { Link } from 'react-router-dom';
 import { Package, ArrowLeftRight, AlertTriangle, Plus } from 'lucide-react';
+// นำเข้า Components จาก Recharts
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -10,6 +12,7 @@ export default function Dashboard() {
     lowStock: 0
   });
   const [recentActivities, setRecentActivities] = useState([]);
+  const [chartData, setChartData] = useState([]); // State สำหรับเก็บข้อมูลกราฟ
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -20,28 +23,18 @@ export default function Dashboard() {
     try {
       setLoading(true);
       
-      // 1. ดึงจำนวนสินค้าทั้งหมด
-      const { count: productCount } = await supabase
-        .from('products')
-        .select('*', { count: 'exact', head: true });
-
-      // 2. ดึงรายการเคลื่อนไหววันนี้
+      // 1. ดึงข้อมูลสถิติทั่วไป (เหมือนเดิม)
+      const { count: productCount } = await supabase.from('products').select('*', { count: 'exact', head: true });
+      
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      const { count: txCount } = await supabase
-        .from('transactions')
+      const { count: txCount } = await supabase.from('transactions')
         .select('*', { count: 'exact', head: true })
         .gte('created_at', today.toISOString());
 
-      // 3. ดึงจำนวนสินค้าที่สต็อกใกล้หมด (น้อยกว่าหรือเท่ากับ min_stock)
-      const { data: lowStockData } = await supabase
-        .from('products')
-        .select('id')
-        .filter('current_qty', 'lte', 5); // เช็คคร่าวๆ ที่ 5 ชิ้น (สามารถแก้ให้ดึงตาม min_stock จริงๆ ได้)
+      const { data: lowStockData } = await supabase.from('products').select('id').filter('current_qty', 'lte', 5);
 
-      // 4. ดึงกิจกรรมล่าสุด 5 รายการ
-      const { data: recentTx } = await supabase
-        .from('transactions')
+      const { data: recentTx } = await supabase.from('transactions')
         .select(`*, products(name)`)
         .order('created_at', { ascending: false })
         .limit(5);
@@ -53,6 +46,44 @@ export default function Dashboard() {
       });
       setRecentActivities(recentTx || []);
 
+      // 2. 📊 ดึงข้อมูลเพื่อสร้างกราฟ (Transactions ทั้งหมด)
+      const { data: allTransactions } = await supabase.from('transactions').select('created_at, transaction_type, quantity');
+      
+      // ฟังก์ชันประมวลผลข้อมูลกราฟ (ย้อนหลัง 6 เดือน)
+      if (allTransactions) {
+        const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+        const monthlyData = [];
+        const currentDate = new Date();
+
+        // สร้างโครงสร้างข้อมูลเปล่าๆ ย้อนหลัง 6 เดือน
+        for (let i = 5; i >= 0; i--) {
+          const d = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+          monthlyData.push({
+            name: thaiMonths[d.getMonth()], // ชื่อเดือนที่จะโชว์แกน X
+            monthIndex: d.getMonth(),
+            year: d.getFullYear(),
+            รับเข้า: 0, // Inbound
+            เบิกออก: 0  // Outbound
+          });
+        }
+
+        // จับคู่และบวกตัวเลขลงในแต่ละเดือน
+        allTransactions.forEach(tx => {
+          const txDate = new Date(tx.created_at);
+          const matchIndex = monthlyData.findIndex(m => m.monthIndex === txDate.getMonth() && m.year === txDate.getFullYear());
+          
+          if (matchIndex !== -1) {
+            if (tx.transaction_type === 'IN') {
+              monthlyData[matchIndex].รับเข้า += tx.quantity;
+            } else if (tx.transaction_type === 'OUT') {
+              monthlyData[matchIndex].เบิกออก += tx.quantity;
+            }
+          }
+        });
+
+        setChartData(monthlyData);
+      }
+
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -60,13 +91,32 @@ export default function Dashboard() {
     }
   }
 
+  // ปรับแต่งหน้าต่าง Tooltip ตอนเอาเมาส์ชี้กราฟให้สวยงาม
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white p-4 rounded-xl shadow-lg border border-slate-100">
+          <p className="font-bold text-slate-800 mb-2">{label}</p>
+          {payload.map((entry, index) => (
+            <div key={index} className="flex items-center gap-2 text-sm">
+              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }}></div>
+              <span className="text-slate-600">{entry.name}:</span>
+              <span className="font-bold text-slate-800">{entry.value.toLocaleString()} ชิ้น</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6 pb-10">
       {/* Banner */}
       <div className="bg-white rounded-2xl p-6 sm:p-8 shadow-sm border border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-800">
-            ยินดีต้อนรับกลับมา
+            ยินดีต้อนรับกลับมา! 👋
           </h1>
           <p className="text-slate-500 mt-2">นี่คือภาพรวมคลังสินค้าของคุณในวันนี้</p>
         </div>
@@ -78,7 +128,7 @@ export default function Dashboard() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="bg-blue-50 p-4 rounded-xl text-blue-600">
             <Package className="w-6 h-6" />
           </div>
@@ -90,7 +140,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="bg-teal-50 p-4 rounded-xl text-teal-600">
             <ArrowLeftRight className="w-6 h-6" />
           </div>
@@ -102,7 +152,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="bg-amber-50 p-4 rounded-xl text-amber-600">
             <AlertTriangle className="w-6 h-6" />
           </div>
@@ -115,42 +165,70 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Recent Activities */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-        <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-          <h2 className="font-bold text-slate-800">กิจกรรมล่าสุด</h2>
-          <Link to="/transactions" className="text-sm font-medium text-teal-600 hover:text-teal-700">ดูทั้งหมด &rarr;</Link>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 📊 Chart Section */}
+        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 p-6 animate-in fade-in zoom-in-95 duration-500">
+          <h2 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
+            <span className="w-2 h-6 bg-teal-500 rounded-full"></span>
+            สถิติการรับ-จ่าย ย้อนหลัง 6 เดือน
+          </h2>
+          
+          <div className="h-72 w-full">
+            {loading ? (
+              <div className="w-full h-full flex items-center justify-center text-slate-400">กำลังโหลดกราฟ...</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                  <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f8fafc' }} />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
+                  <Bar dataKey="รับเข้า" fill="#0d9488" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                  <Bar dataKey="เบิกออก" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
         </div>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <tbody className="divide-y divide-slate-100">
-              {loading ? (
-                <tr><td className="px-6 py-8 text-center text-slate-400">กำลังโหลดข้อมูล...</td></tr>
-              ) : recentActivities.length === 0 ? (
-                <tr><td className="px-6 py-8 text-center text-slate-400">ยังไม่มีการเคลื่อนไหวในระบบ</td></tr>
-              ) : (
-                recentActivities.map((activity) => (
-                  <tr key={activity.id} className="hover:bg-slate-50/50">
-                    <td className="px-6 py-4">
-                      <p className="font-medium text-slate-800">{activity.products?.name}</p>
-                      <p className="text-xs text-slate-500 mt-1">{new Date(activity.created_at).toLocaleString('th-TH')}</p>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
-                        activity.transaction_type === 'IN' ? 'bg-teal-100 text-teal-700' : 
-                        activity.transaction_type === 'OUT' ? 'bg-amber-100 text-amber-700' : 
-                        'bg-blue-100 text-blue-700'
-                      }`}>
-                        {activity.transaction_type === 'IN' ? '+' : activity.transaction_type === 'OUT' ? '-' : ''}
-                        {activity.quantity}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+
+        {/* Recent Activities */}
+        <div className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+            <h2 className="font-bold text-slate-800">กิจกรรมล่าสุด</h2>
+            <Link to="/transactions" className="text-xs font-medium text-teal-600 hover:text-teal-700 bg-teal-50 px-3 py-1.5 rounded-lg">ดูทั้งหมด</Link>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <tbody className="divide-y divide-slate-100">
+                {loading ? (
+                  <tr><td className="px-6 py-8 text-center text-slate-400 text-sm">กำลังโหลดข้อมูล...</td></tr>
+                ) : recentActivities.length === 0 ? (
+                  <tr><td className="px-6 py-8 text-center text-slate-400 text-sm">ยังไม่มีการเคลื่อนไหวในระบบ</td></tr>
+                ) : (
+                  recentActivities.map((activity) => (
+                    <tr key={activity.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-6 py-4">
+                        <p className="font-medium text-slate-800 text-sm">{activity.products?.name}</p>
+                        <p className="text-xs text-slate-400 mt-1">{new Date(activity.created_at).toLocaleString('th-TH')}</p>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
+                          activity.transaction_type === 'IN' ? 'bg-teal-50 text-teal-700 border border-teal-100' : 
+                          activity.transaction_type === 'OUT' ? 'bg-amber-50 text-amber-700 border border-amber-100' : 
+                          'bg-blue-50 text-blue-700 border border-blue-100'
+                        }`}>
+                          {activity.transaction_type === 'IN' ? '+' : activity.transaction_type === 'OUT' ? '-' : ''}
+                          {activity.quantity}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
