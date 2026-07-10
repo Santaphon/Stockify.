@@ -15,6 +15,7 @@ export default function Transactions() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef(null);
+  const isSubmitting = useRef(false);
 
   useEffect(() => {
     fetchProducts();
@@ -69,19 +70,27 @@ export default function Transactions() {
     setShowDropdown(false);
   };
 
-  const handleSubmit = async (e) => {
+   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // 🛡️ 1. ยามเฝ้าประตู: ถ้ากำลังโหลดอยู่ ให้หยุดการทำงานทันที (ป้องกันกดรัว/กดเบิ้ล)
-    if (loading) return;
 
-    if (!sku || !quantity) return alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+    // 🛡️ 1. เช็คแม่กุญแจเหล็กแบบทันที (เร็วกว่า loading)
+    if (isSubmitting.current) return; 
+    
+    // 🛡️ 2. ล็อกประตูทันที! ห้ามใครเข้าจนกว่าจะเสร็จงาน
+    isSubmitting.current = true; 
+
+    if (!sku || !quantity) {
+      isSubmitting.current = false; // ปลดล็อกถ้าข้อมูลไม่ครบ
+      return alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+    }
     
     const parsedQty = parseInt(quantity);
-    if (isNaN(parsedQty) || parsedQty <= 0) return alert('จำนวนต้องมากกว่า 0');
+    if (isNaN(parsedQty) || parsedQty <= 0) {
+      isSubmitting.current = false;
+      return alert('จำนวนต้องมากกว่า 0');
+    }
 
-    // 🛡️ 2. ล็อกปุ่มทันทีก่อนเริ่มคุยกับฐานข้อมูล
-    setLoading(true);
+    setLoading(true); // สั่งให้ปุ่มหมุน/เปลี่ยนสี
     
     try {
       let { data: product } = await supabase.from('products').select('*').eq('sku', sku.toUpperCase()).single();
@@ -105,7 +114,7 @@ export default function Transactions() {
          newQty -= parsedQty;
       }
 
-      // อัปเดตยอดคงเหลือ
+      // บันทึกสต็อกใหม่
       await supabase.from('products').update({ current_qty: newQty }).eq('id', product.id);
 
       // บันทึกประวัติ
@@ -115,9 +124,24 @@ export default function Transactions() {
         quantity: parsedQty
       }]);
 
+      // 📢 โค้ดแจ้งเตือน LINE ของเดิม
+      if (type === 'OUT' && newQty <= 5) {
+        try {
+          await fetch('/api/line', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: `⚠️ แจ้งเตือนสต็อกใกล้หมด!\n📦 สินค้า: ${product.name}\n🔑 SKU: ${product.sku}\n📉 คงเหลือเพียง: ${newQty} ชิ้น\nโปรดสั่งซื้อเพิ่มครับ`
+            })
+          });
+        } catch (err) {
+          console.error("LINE Notify Error:", err);
+        }
+      }
+
       alert('บันทึกรายการสำเร็จ!');
       
-      // ล้างค่าฟอร์ม
+      // ล้างค่าช่องกรอก
       setSku('');
       setSearchTerm('');
       setQuantity(''); 
@@ -127,8 +151,9 @@ export default function Transactions() {
     } catch (error) {
       alert('ข้อผิดพลาด: ' + error.message);
     } finally {
-      // 🛡️ 3. ปลดล็อกปุ่มเมื่อทำงานทุกอย่างเสร็จสิ้น (หรือเกิด Error)
       setLoading(false);
+      // 🛡️ 3. ปลดล็อกแม่กุญแจเหล็กเมื่อทำงานทุกอย่างเสร็จแล้ว 100%
+      isSubmitting.current = false; 
     }
   };
 
