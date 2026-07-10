@@ -1,248 +1,252 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { ArrowLeftRight, ScanLine, X, PackagePlus, PackageMinus } from 'lucide-react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Package, ScanBarcode, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
 
 export default function Transactions() {
-  const [transactions, setTransactions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [type, setType] = useState('IN');
+  const [quantity, setQuantity] = useState(''); 
+  const [sku, setSku] = useState('');
   
-  // State สำหรับฟอร์มและกล้อง
-  const [formData, setFormData] = useState({ sku: '', type: 'IN', qty: '' });
-  const [isScanning, setIsScanning] = useState(false);
+  // State ใหม่สำหรับระบบค้นหา
+  const [searchTerm, setSearchTerm] = useState('');
+  const [products, setProducts] = useState([]);
+  const [filteredProducts, setFilteredProducts] = useState([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  
+  const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const dropdownRef = useRef(null);
 
   useEffect(() => {
-    fetchTransactions();
-  }, []);
-
-  // 📷 ควบคุมการเปิด/ปิดกล้องสแกนบาร์โค้ด
-  useEffect(() => {
-    let scanner = null;
-    if (isScanning) {
-      scanner = new Html5QrcodeScanner(
-        "reader",
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        false
-      );
-
-      scanner.render(
-        (decodedText) => {
-          // สแกนสำเร็จ -> นำรหัสไปใส่ในช่อง SKU และปิดกล้อง
-          setFormData(prev => ({ ...prev, sku: decodedText }));
-          setIsScanning(false);
-        },
-        (errorMessage) => {
-          // ซ่อน Error กรณีที่มันแค่กำลังพยายามโฟกัสหาบาร์โค้ด
-        }
-      );
-    }
-
-    return () => {
-      if (scanner) {
-        scanner.clear().catch(console.error);
+    fetchProducts();
+    fetchHistory();
+    
+    // ฟังก์ชันสำหรับปิด Dropdown เวลากดคลิกพื้นที่ว่างข้างนอก
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDropdown(false);
       }
     };
-  }, [isScanning]);
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
-  async function fetchTransactions() {
+  const fetchProducts = async () => {
+    const { data } = await supabase.from('products').select('*');
+    if (data) setProducts(data);
+  };
+
+  const fetchHistory = async () => {
+    const { data } = await supabase
+      .from('transactions')
+      .select(`*, products(name, sku)`)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (data) setHistory(data);
+  };
+
+  // ฟังก์ชันจัดการตอนพิมพ์ค้นหา
+  const handleSearchChange = (e) => {
+    const value = e.target.value;
+    setSearchTerm(value);
+    setSku(value); 
+    
+    if (value.length > 0) {
+      const filtered = products.filter(p => 
+        p.name.toLowerCase().includes(value.toLowerCase()) || 
+        p.sku.toLowerCase().includes(value.toLowerCase())
+      );
+      setFilteredProducts(filtered);
+      setShowDropdown(true);
+    } else {
+      setShowDropdown(false);
+    }
+  };
+
+  // ฟังก์ชันตอนกดเลือกสินค้าจากเมนู Dropdown
+  const selectProduct = (selectedSku, selectedName) => {
+    setSearchTerm(`${selectedSku} - ${selectedName}`); // โชว์ชื่อสวยๆ ในช่อง
+    setSku(selectedSku); // แอบเก็บรหัส SKU ตัวจริงไว้หลังบ้าน
+    setShowDropdown(false);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!sku || !quantity) return alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+    
+    const parsedQty = parseInt(quantity);
+    if (isNaN(parsedQty) || parsedQty <= 0) return alert('จำนวนต้องมากกว่า 0');
+
+    setLoading(true);
     try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('transactions')
-        .select(`id, created_at, transaction_type, quantity, products(sku, name)`)
-        .order('created_at', { ascending: false })
-        .limit(20);
+      let { data: product } = await supabase.from('products').select('*').eq('sku', sku.toUpperCase()).single();
 
-      if (error) throw error;
-      setTransactions(data || []);
+      if (!product && type === 'IN') {
+         const { data: newProduct, error } = await supabase.from('products').insert([{
+           sku: sku.toUpperCase(),
+           name: 'สินค้านำเข้าใหม่ (กรุณาอัปเดตชื่อ)',
+           current_qty: 0,
+         }]).select().single();
+         if (error) throw error;
+         product = newProduct;
+      } else if (!product && type === 'OUT') {
+         throw new Error('ไม่พบสินค้าในระบบ ไม่สามารถเบิกออกได้');
+      }
+
+      let newQty = product.current_qty;
+      if (type === 'IN') newQty += parsedQty;
+      if (type === 'OUT') {
+         if (newQty < parsedQty) throw new Error(`สต็อกไม่เพียงพอ! (คงเหลือ ${newQty} ชิ้น)`);
+         newQty -= parsedQty;
+      }
+
+      await supabase.from('products').update({ current_qty: newQty }).eq('id', product.id);
+
+      await supabase.from('transactions').insert([{
+        product_id: product.id,
+        transaction_type: type,
+        quantity: parsedQty
+      }]);
+
+      alert('บันทึกรายการสำเร็จ!');
+      // ล้างข้อมูลหลังบันทึกเสร็จให้เป็นช่องว่างพร้อมทำงานรอบถัดไป
+      setSku('');
+      setSearchTerm('');
+      setQuantity(''); 
+      fetchProducts();
+      fetchHistory();
     } catch (error) {
-      console.error('Error:', error);
+      alert('ข้อผิดพลาด: ' + error.message);
     } finally {
       setLoading(false);
     }
-  }
-
-  // 💾 ฟังก์ชันบันทึกการรับ-จ่าย พร้อมคำนวณสต็อกอัตโนมัติ
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setIsSubmitting(true);
-    
-    try {
-      // 1. ค้นหาสินค้าจาก SKU ที่พิมพ์หรือสแกนมา
-      const { data: product, error: productError } = await supabase
-        .from('products')
-        .select('*')
-        .eq('sku', formData.sku)
-        .single();
-
-      if (productError || !product) throw new Error('ไม่พบรหัสสินค้านี้ในระบบครับ กรุณาตรวจสอบ SKU อีกครั้ง');
-
-      const qty = parseInt(formData.qty);
-      
-      // 2. คำนวณสต็อกใหม่ และเช็คว่าติดลบไหม
-      const newQty = formData.type === 'IN' ? product.current_qty + qty : product.current_qty - qty;
-      if (newQty < 0) throw new Error(`ไม่สามารถเบิกออกได้ครับ! สินค้า "${product.name}" มีสต็อกคงเหลือแค่ ${product.current_qty} ชิ้น`);
-
-      // 3. บันทึกประวัติลงตาราง Transactions
-      const { error: txError } = await supabase.from('transactions').insert([{
-        product_id: product.id,
-        transaction_type: formData.type,
-        quantity: qty
-      }]);
-      if (txError) throw txError;
-
-      // 4. อัปเดตยอดคงเหลือในตาราง Products
-      const { error: updateError } = await supabase.from('products').update({ current_qty: newQty }).eq('id', product.id);
-      if (updateError) throw updateError;
-
-      alert(`บันทึกรายการสำเร็จ!\nยอดคงเหลือล่าสุดของ ${product.name} คือ ${newQty} ชิ้น`);
-      setFormData({ sku: '', type: 'IN', qty: '' });
-      fetchTransactions();
-    } catch (error) {
-      alert('เกิดข้อผิดพลาด: ' + error.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
+  };
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 mb-6">
         <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-          <ArrowLeftRight className="text-teal-600" /> บันทึก รับ-จ่ายสต็อก
+          <ArrowDownToLine className="text-teal-600" /> บันทึก รับ-จ่ายสต็อก
         </h1>
-        <p className="text-slate-500 mt-1">สแกนบาร์โค้ดหรือกรอกรหัสสินค้าเพื่ออัปเดตยอดคลังสินค้า</p>
+        <p className="text-slate-500 mt-1">ค้นหาสินค้าหรือสแกนบาร์โค้ดเพื่ออัปเดตยอดคลังสินค้า</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* ฝั่งซ้าย: ฟอร์มทำรายการ */}
-        <div className="lg:col-span-1 bg-white rounded-2xl p-6 shadow-sm border border-slate-100 h-fit">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">รหัสสินค้า / บาร์โค้ด (SKU) *</label>
-              <div className="flex gap-2">
-                <input 
-                  type="text" required
-                  value={formData.sku}
-                  onChange={(e) => setFormData({...formData, sku: e.target.value})}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-teal-500 outline-none uppercase"
-                  placeholder="พิมพ์หรือสแกน..."
+        <div className="lg:col-span-1">
+          <form onSubmit={handleSubmit} className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 space-y-5">
+            
+            <div className="space-y-1.5" ref={dropdownRef}>
+              <label className="text-sm font-semibold text-slate-700">ค้นหาสินค้า / บาร์โค้ด (SKU) *</label>
+              <div className="flex gap-2 relative">
+                <input
+                  type="text"
+                  placeholder="พิมพ์ชื่อสินค้า หรือ รหัส..."
+                  value={searchTerm}
+                  onChange={handleSearchChange}
+                  className="flex-1 w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all"
                 />
-                <button 
-                  type="button" 
-                  onClick={() => setIsScanning(true)}
-                  className="bg-slate-800 text-white p-2.5 rounded-xl hover:bg-slate-700 transition-colors flex-shrink-0"
-                  title="เปิดกล้องสแกนบาร์โค้ด"
-                >
-                  <ScanLine className="w-6 h-6" />
+                <button type="button" className="bg-slate-800 hover:bg-slate-700 text-white p-2.5 rounded-xl transition-colors shrink-0">
+                  <ScanBarcode className="w-5 h-5" />
+                </button>
+
+                {/* เมนู Dropdown ที่จะเด้งขึ้นมาตอนพิมพ์ */}
+                {showDropdown && (
+                  <ul className="absolute top-full left-0 right-0 z-50 mt-1 bg-white border border-slate-100 shadow-xl rounded-xl max-h-60 overflow-auto">
+                    {filteredProducts.length > 0 ? (
+                      filteredProducts.map(p => (
+                        <li 
+                          key={p.id}
+                          onClick={() => selectProduct(p.sku, p.name)}
+                          className="px-4 py-3 hover:bg-teal-50 cursor-pointer border-b border-slate-50 last:border-0 flex justify-between items-center"
+                        >
+                          <div>
+                            <div className="font-semibold text-slate-800 text-sm">{p.name}</div>
+                            <div className="text-xs text-slate-400">SKU: {p.sku}</div>
+                          </div>
+                          <div className="text-xs font-bold text-teal-600 bg-teal-50 px-2 py-1 rounded-md">
+                            เหลือ {p.current_qty}
+                          </div>
+                        </li>
+                      ))
+                    ) : (
+                      <li className="px-4 py-3 text-sm text-slate-400 text-center bg-slate-50">ไม่พบสินค้าในระบบ</li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-semibold text-slate-700">ประเภทรายการ *</label>
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button" onClick={() => setType('IN')} className={`py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 border-2 transition-all ${type === 'IN' ? 'border-teal-500 text-teal-700 bg-teal-50' : 'border-slate-100 text-slate-400 hover:bg-slate-50'}`}>
+                  <ArrowDownToLine className="w-4 h-4" /> รับเข้า (IN)
+                </button>
+                <button type="button" onClick={() => setType('OUT')} className={`py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 border-2 transition-all ${type === 'OUT' ? 'border-orange-500 text-orange-700 bg-orange-50' : 'border-slate-100 text-slate-400 hover:bg-slate-50'}`}>
+                  <ArrowUpFromLine className="w-4 h-4" /> เบิกออก (OUT)
                 </button>
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">ประเภทรายการ *</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setFormData({...formData, type: 'IN'})}
-                  className={`py-3 rounded-xl font-bold text-sm flex justify-center items-center gap-2 border-2 transition-all ${formData.type === 'IN' ? 'bg-teal-50 border-teal-500 text-teal-700' : 'border-slate-100 text-slate-500 hover:border-slate-200'}`}
-                >
-                  <PackagePlus className="w-5 h-5" /> รับเข้า (IN)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFormData({...formData, type: 'OUT'})}
-                  className={`py-3 rounded-xl font-bold text-sm flex justify-center items-center gap-2 border-2 transition-all ${formData.type === 'OUT' ? 'bg-amber-50 border-amber-500 text-amber-700' : 'border-slate-100 text-slate-500 hover:border-slate-200'}`}
-                >
-                  <PackageMinus className="w-5 h-5" /> เบิกออก (OUT)
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">จำนวน *</label>
-              <input 
-                type="number" min="1" required
-                value={formData.qty}
-                onChange={(e) => setFormData({...formData, qty: e.target.value})}
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-teal-500 outline-none"
-                placeholder="ระบุจำนวนชิ้น..."
+            <div className="space-y-1.5">
+              <label className="text-sm font-semibold text-slate-700">จำนวน *</label>
+              <input
+                type="number"
+                min="1"
+                placeholder="ระบุจำนวน..."
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all"
               />
             </div>
 
-            <button 
-              type="submit" disabled={isSubmitting} 
-              className={`w-full py-3 rounded-xl font-medium text-white shadow-sm transition-colors mt-4 ${formData.type === 'IN' ? 'bg-teal-600 hover:bg-teal-700' : 'bg-amber-500 hover:bg-amber-600'} disabled:opacity-50`}
-            >
-              {isSubmitting ? 'กำลังประมวลผล...' : (formData.type === 'IN' ? 'ยืนยันการรับสินค้าเข้า' : 'ยืนยันการเบิกสินค้าออก')}
+            <button type="submit" disabled={loading} className="w-full py-3 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-50 mt-4">
+              <Package className="w-5 h-5" />
+              {loading ? 'กำลังบันทึก...' : type === 'IN' ? 'ยืนยันการรับสินค้าเข้า' : 'ยืนยันการเบิกสินค้าออก'}
             </button>
           </form>
         </div>
 
-        {/* ฝั่งขวา: ประวัติการทำรายการล่าสุด */}
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-            <h3 className="font-bold text-slate-800">ประวัติการทำรายการ 20 รายการล่าสุด</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="text-slate-400 text-xs uppercase border-b border-slate-100">
-                  <th className="px-6 py-3 font-semibold">วันเวลา</th>
-                  <th className="px-6 py-3 font-semibold">รายการสินค้า</th>
-                  <th className="px-6 py-3 font-semibold text-right">จำนวน</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {loading ? (
-                  <tr><td colSpan="3" className="px-6 py-8 text-center text-slate-400">กำลังโหลด...</td></tr>
-                ) : transactions.length === 0 ? (
-                  <tr><td colSpan="3" className="px-6 py-8 text-center text-slate-400">ยังไม่มีประวัติการทำรายการ</td></tr>
-                ) : (
-                  transactions.map((tx) => (
-                    <tr key={tx.id} className="hover:bg-slate-50/50">
-                      <td className="px-6 py-4 text-sm text-slate-500">
-                        {new Date(tx.created_at).toLocaleString('th-TH')}
+        <div className="lg:col-span-2">
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 h-full">
+            <h3 className="font-bold text-slate-800 border-b border-slate-100 pb-4 mb-4">ประวัติการทำรายการล่าสุด</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead>
+                  <tr className="text-slate-400 border-b border-slate-100">
+                    <th className="pb-3 font-medium px-2">วันเวลา</th>
+                    <th className="pb-3 font-medium px-2">รายการสินค้า</th>
+                    <th className="pb-3 font-medium text-right px-2">จำนวน</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {history.map((tx) => (
+                    <tr key={tx.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-3 px-2 text-slate-500">
+                        {new Date(tx.created_at).toLocaleString('th-TH', { 
+                          year: 'numeric', month: 'short', day: 'numeric', 
+                          hour: '2-digit', minute: '2-digit' 
+                        })}
                       </td>
-                      <td className="px-6 py-4">
-                        <p className="font-bold text-slate-800">{tx.products?.name}</p>
-                        <p className="text-xs text-slate-400">SKU: {tx.products?.sku}</p>
+                      <td className="py-3 px-2">
+                        <div className="font-semibold text-slate-800">{tx.products?.name || 'ลบแล้ว'}</div>
+                        <div className="text-xs text-slate-400">SKU: {tx.products?.sku}</div>
                       </td>
-                      <td className="px-6 py-4 text-right">
-                        <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-lg text-sm font-bold ${
-                          tx.transaction_type === 'IN' ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-700'
+                      <td className="py-3 px-2 text-right">
+                        <span className={`inline-flex items-center justify-center px-2.5 py-1 rounded-md text-xs font-bold ${
+                          tx.transaction_type === 'IN' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
                         }`}>
                           {tx.transaction_type === 'IN' ? '+' : '-'}{tx.quantity}
                         </span>
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
-
-      {/* Modal กล้องสแกนบาร์โค้ด */}
-      {isScanning && (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="font-bold text-slate-800 flex items-center gap-2"><ScanLine className="w-5 h-5"/> สแกนบาร์โค้ด / QR Code</h3>
-              <button onClick={() => setIsScanning(false)} className="text-slate-400 hover:text-red-500 p-1"><X className="w-6 h-6" /></button>
-            </div>
-            <div className="p-4 bg-black">
-              {/* กล่องสำหรับแสดงภาพจากกล้อง */}
-              <div id="reader" className="w-full rounded-lg overflow-hidden border-2 border-teal-500/50"></div>
-            </div>
-            <div className="p-4 bg-slate-50 text-center text-sm text-slate-500">
-              หันกล้องไปที่บาร์โค้ดของสินค้า รหัสจะถูกกรอกโดยอัตโนมัติ
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
