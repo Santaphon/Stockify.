@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { Package, ScanBarcode, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import { Package, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import Swal from 'sweetalert2';
+
 
 export default function Transactions() {
   const [type, setType] = useState('IN');
@@ -73,24 +75,33 @@ export default function Transactions() {
    const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // 🛡️ 1. เช็คแม่กุญแจเหล็กแบบทันที (เร็วกว่า loading)
     if (isSubmitting.current) return; 
-    
-    // 🛡️ 2. ล็อกประตูทันที! ห้ามใครเข้าจนกว่าจะเสร็จงาน
     isSubmitting.current = true; 
 
     if (!sku || !quantity) {
-      isSubmitting.current = false; // ปลดล็อกถ้าข้อมูลไม่ครบ
-      return alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+      isSubmitting.current = false;
+      // 🎨 1. แจ้งเตือน: ลืมกรอกข้อมูล
+      return Swal.fire({
+        icon: 'warning',
+        title: 'ข้อมูลไม่ครบ',
+        text: 'กรุณากรอกรหัสสินค้าและจำนวนให้ครบถ้วน',
+        confirmButtonColor: '#0d9488'
+      });
     }
     
     const parsedQty = parseInt(quantity);
     if (isNaN(parsedQty) || parsedQty <= 0) {
       isSubmitting.current = false;
-      return alert('จำนวนต้องมากกว่า 0');
+      // 🎨 2. แจ้งเตือน: ใส่จำนวนผิด
+      return Swal.fire({
+        icon: 'warning',
+        title: 'จำนวนไม่ถูกต้อง',
+        text: 'กรุณาระบุจำนวนที่มากกว่า 0',
+        confirmButtonColor: '#0d9488'
+      });
     }
 
-    setLoading(true); // สั่งให้ปุ่มหมุน/เปลี่ยนสี
+    setLoading(true);
     
     try {
       let { data: product } = await supabase.from('products').select('*').eq('sku', sku.toUpperCase()).single();
@@ -107,31 +118,33 @@ export default function Transactions() {
          throw new Error('ไม่พบสินค้าในระบบ ไม่สามารถเบิกออกได้');
       }
 
-      let newQty = product.current_qty;
-      if (type === 'IN') newQty += parsedQty;
       if (type === 'OUT') {
-         if (newQty < parsedQty) throw new Error(`สต็อกไม่เพียงพอ! (คงเหลือ ${newQty} ชิ้น)`);
-         newQty -= parsedQty;
+         if (product.current_qty < parsedQty) {
+             setLoading(false);
+             isSubmitting.current = false;
+             // 🎨 3. แจ้งเตือน: สต็อกไม่พอ (แทนหน้าต่าง Error ดั้งเดิม)
+             return Swal.fire({
+               icon: 'error',
+               title: 'เบิกไม่ได้! สต็อกไม่พอ',
+               html: `สินค้ามีอยู่ <b>${product.current_qty}</b> ชิ้น<br>แต่ต้องการเบิก <b>${parsedQty}</b> ชิ้น`,
+               confirmButtonColor: '#ef4444' // ใช้ปุ่มสีแดงให้รู้ว่าเป็น Error
+             });
+         }
       }
 
-      // บันทึกสต็อกใหม่
-      await supabase.from('products').update({ current_qty: newQty }).eq('id', product.id);
-
-      // บันทึกประวัติ
       await supabase.from('transactions').insert([{
         product_id: product.id,
         transaction_type: type,
         quantity: parsedQty
       }]);
 
-      // 📢 โค้ดแจ้งเตือน LINE ของเดิม
-      if (type === 'OUT' && newQty <= 5) {
+      if (type === 'OUT' && (product.current_qty - parsedQty) <= 5) {
         try {
           await fetch('/api/line', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              message: `⚠️ แจ้งเตือนสต็อกใกล้หมด!\n📦 สินค้า: ${product.name}\n🔑 SKU: ${product.sku}\n📉 คงเหลือเพียง: ${newQty} ชิ้น\nโปรดสั่งซื้อเพิ่มครับ`
+              message: `⚠️ แจ้งเตือนสต็อกใกล้หมด!\n📦 สินค้า: ${product.name}\n🔑 SKU: ${product.sku}\n📉 คงเหลือเพียง: ${product.current_qty - parsedQty} ชิ้น\nโปรดสั่งซื้อเพิ่มครับ`
             })
           });
         } catch (err) {
@@ -139,9 +152,15 @@ export default function Transactions() {
         }
       }
 
-      alert('บันทึกรายการสำเร็จ!');
+      // 🎨 4. แจ้งเตือน: บันทึกสำเร็จ (แบบเด้งแล้วหายไปเอง ไม่ต้องกด OK)
+      Swal.fire({
+        icon: 'success',
+        title: 'บันทึกรายการสำเร็จ!',
+        text: 'ระบบได้อัปเดตสต็อกเรียบร้อยแล้ว',
+        timer: 1500, // หายไปเองใน 1.5 วินาที
+        showConfirmButton: false
+      });
       
-      // ล้างค่าช่องกรอก
       setSku('');
       setSearchTerm('');
       setQuantity(''); 
@@ -149,10 +168,15 @@ export default function Transactions() {
       fetchHistory();
       
     } catch (error) {
-      alert('ข้อผิดพลาด: ' + error.message);
+      // 🎨 5. แจ้งเตือน: Error ระบบหลังบ้าน
+      Swal.fire({
+        icon: 'error',
+        title: 'เกิดข้อผิดพลาด',
+        text: error.message,
+        confirmButtonColor: '#ef4444'
+      });
     } finally {
       setLoading(false);
-      // 🛡️ 3. ปลดล็อกแม่กุญแจเหล็กเมื่อทำงานทุกอย่างเสร็จแล้ว 100%
       isSubmitting.current = false; 
     }
   };
@@ -181,10 +205,7 @@ export default function Transactions() {
                   // 🛡️ เพิ่ม onFocus เพื่อให้เมนูเด้งกลับมาทันทีที่คลิกช่องค้นหา
                   onFocus={() => { if (searchTerm.length > 0) setShowDropdown(true); }}
                   className="flex-1 w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all"
-                />
-                <button type="button" className="bg-slate-800 hover:bg-slate-700 text-white p-2.5 rounded-xl transition-colors shrink-0">
-                  <ScanBarcode className="w-5 h-5" />
-                </button>
+                />               
               </div>
 
               {/* เมนู Dropdown ย้ายลงมาตรงนี้เพื่อไม่ให้โดนปุ่มอื่นบัง */}
