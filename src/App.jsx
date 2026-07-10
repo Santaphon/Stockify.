@@ -7,6 +7,7 @@ import Products from './pages/Products';
 import Transactions from './pages/Transactions';
 import Login from './pages/Login';
 import Settings from './pages/Settings';
+import AiScanner from './pages/AiScanner';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -46,6 +47,7 @@ function App() {
           <Route path="/" element={<Layout session={session} />}>
             <Route index element={<Dashboard />} />
             <Route path="products" element={<Products />} />
+            <Route path="ai-scanner" element={<AiScanner />} />
             <Route path="transactions" element={<Transactions />} />
             {/* ป้องกันคนพิมพ์ URL มั่วให้เด้งกลับหน้าแรก */}
             <Route path="settings" element={<Settings />} />

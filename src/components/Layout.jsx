@@ -1,6 +1,6 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { LayoutDashboard, Package, ArrowLeftRight, LogOut, Settings as SettingsIcon } from 'lucide-react';
+import { LayoutDashboard, Package, ArrowLeftRight, LogOut, Settings as SettingsIcon,Sparkles } from 'lucide-react';
 
 export default function Layout({ session }) {
   const location = useLocation();
@@ -10,6 +10,7 @@ export default function Layout({ session }) {
     { path: '/', name: 'แดชบอร์ด', icon: LayoutDashboard },
     { path: '/products', name: 'สินค้า', icon: Package },
     { path: '/transactions', name: 'รับ-จ่าย', icon: ArrowLeftRight },
+    { path: '/ai-scanner', name: 'สแกน AI', icon: Sparkles },
     { path: '/settings', name: 'ตั้งค่า', icon: SettingsIcon },
   ];
 
