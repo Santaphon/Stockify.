@@ -46,7 +46,7 @@ export default function AiScanner() {
 
       const genAI = new GoogleGenerativeAI(apiKey);
       // ใช้โมเดลความเร็วสูงที่เก่งเรื่องวิเคราะห์ภาพ
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
       const imagePart = await fileToGenerativePart(image);
       
