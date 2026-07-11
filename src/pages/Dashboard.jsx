@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { Link } from 'react-router-dom';
-import { Package, ArrowLeftRight, AlertTriangle, Plus } from 'lucide-react';
+import { Package, ArrowLeftRight, AlertTriangle, Plus, X } from 'lucide-react';
 // นำเข้า Components จาก Recharts
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -14,6 +14,8 @@ export default function Dashboard() {
   const [recentActivities, setRecentActivities] = useState([]);
   const [chartData, setChartData] = useState([]); // State สำหรับเก็บข้อมูลกราฟ
   const [loading, setLoading] = useState(true);
+  const [lowStockList, setLowStockList] = useState([]); 
+  const [isLowStockModalOpen, setIsLowStockModalOpen] = useState(false);
 
   useEffect(() => {
     fetchDashboardData();
@@ -32,7 +34,13 @@ export default function Dashboard() {
         .select('*', { count: 'exact', head: true })
         .gte('created_at', today.toISOString());
 
-      const { data: lowStockData } = await supabase.from('products').select('id').eq('is_active', true).filter('current_qty', 'lte', 5);
+      const { data: lowStockData } = await supabase
+        .from('products')
+        .select('sku, name, current_qty') 
+        .eq('is_active', true)
+        .filter('current_qty', 'lte', 5);
+        
+      setLowStockList(lowStockData || []); // บันทึกรายชื่อลง State
 
       const { data: recentTx } = await supabase.from('transactions')
         .select(`*, products(name)`)
@@ -152,15 +160,21 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 hover:shadow-md transition-shadow">
+        <div 
+          onClick={() => stats.lowStock > 0 && setIsLowStockModalOpen(true)}
+          className={`bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 transition-all ${stats.lowStock > 0 ? 'cursor-pointer hover:shadow-md hover:border-amber-300' : ''}`}
+        >
           <div className="bg-amber-50 p-4 rounded-xl text-amber-600">
             <AlertTriangle className="w-6 h-6" />
           </div>
           <div>
             <p className="text-slate-500 text-sm font-medium">แจ้งเตือนสต็อกต่ำ</p>
-            <p className={`text-2xl font-bold ${stats.lowStock > 0 ? 'text-red-600' : 'text-slate-800'}`}>
-              {loading ? '...' : stats.lowStock}
-            </p>
+            <div className="flex items-end gap-2">
+              <p className={`text-2xl font-bold ${stats.lowStock > 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                {loading ? '...' : stats.lowStock}
+              </p>
+              {stats.lowStock > 0 && <span className="text-xs text-amber-600 font-medium mb-1">(คลิกเพื่อดู)</span>}
+            </div>
           </div>
         </div>
       </div>
@@ -192,7 +206,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Recent Activities */}
+       {/* Recent Activities */}
         <div className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
           <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
             <h2 className="font-bold text-slate-800">กิจกรรมล่าสุด</h2>
@@ -232,6 +246,51 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* 🔴 Modal แสดงรายชื่อสินค้าสต็อกต่ำ (ย้ายเข้ามาอยู่ในจุดที่ถูกต้องแล้ว!) */}
+      {isLowStockModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-amber-50/50">
+              <h3 className="font-bold text-amber-800 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5" /> รายการสินค้าที่ต้องสั่งเพิ่ม
+              </h3>
+              <button onClick={() => setIsLowStockModalOpen(false)} className="text-slate-400 hover:text-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-0 max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 sticky top-0">
+                  <tr>
+                    <th className="px-6 py-3 font-medium text-slate-500 border-b border-slate-100">สินค้า</th>
+                    <th className="px-6 py-3 font-medium text-slate-500 border-b border-slate-100 text-right">คงเหลือ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {lowStockList.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50/50">
+                      <td className="px-6 py-3">
+                        <p className="font-medium text-slate-800">{item.name}</p>
+                        <p className="text-xs text-slate-400 mt-0.5">{item.sku}</p>
+                      </td>
+                      <td className="px-6 py-3 text-right">
+                        <span className="font-bold text-red-500">{item.current_qty}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-slate-50 text-center">
+              <button onClick={() => setIsLowStockModalOpen(false)} className="px-6 py-2 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-xl font-medium text-sm transition-colors">
+                ปิดหน้าต่าง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
