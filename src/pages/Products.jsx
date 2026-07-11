@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Package, Plus, Edit, Trash2, X, Tags,Download } from 'lucide-react';
+import { Package, Plus, Edit, Trash2, X, Tags,Download, Printer } from 'lucide-react';
 
 export default function Products() {
   const [products, setProducts] = useState([]);
@@ -19,6 +19,51 @@ export default function Products() {
   const [formData, setFormData] = useState({
     sku: '', name: '', category_id: '', min_stock: '', location: ''
   });
+  const [printProduct, setPrintProduct] = useState(null);
+   // ฟังก์ชันสร้างหน้าต่างใหม่สำหรับสั่งพิมพ์
+  function handlePrintBarcode() {
+    if (!printProduct) return;
+    
+    // สร้างหน้าต่างป๊อปอัปใหม่
+    const printWindow = window.open('', '_blank', 'width=800,height=600');
+    
+    // ใส่ HTML และดึงภาพบาร์โค้ดจาก API
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>พิมพ์บาร์โค้ด - ${printProduct.sku}</title>
+          <style>
+            body { font-family: 'Sarabun', sans-serif; text-align: center; padding-top: 50px; }
+            .barcode-card { 
+              border: 2px dashed #cbd5e1; 
+              padding: 20px 30px; 
+              display: inline-block; 
+              border-radius: 12px;
+            }
+            h2 { margin: 0 0 15px 0; font-size: 20px; color: #1e293b; }
+            img { max-width: 100%; height: 80px; }
+            p { margin: 10px 0 0 0; font-size: 16px; color: #475569; letter-spacing: 2px; font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          <div class="barcode-card">
+            <h2>${printProduct.name}</h2>
+            <img src="https://bwipjs-api.metafloor.com/?bcid=code128&text=${printProduct.sku}&scale=3" alt="Barcode" />
+            <p>${printProduct.sku}</p>
+          </div>
+          <script>
+            // รอให้รูปโหลดเสร็จ 0.5 วินาที แล้วค่อยเด้งหน้าต่างพิมพ์
+            setTimeout(() => {
+              window.print();
+              window.close();
+            }, 500);
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  }
+
 
   useEffect(() => {
     fetchProducts();
@@ -204,6 +249,9 @@ export default function Products() {
                   <td className="px-6 py-4">{product.location || '-'}</td>
                   <td className="px-6 py-4 text-right"><span className={`font-bold ${product.current_qty <= product.min_stock ? 'text-red-500' : 'text-teal-600'}`}>{product.current_qty}</span></td>
                   <td className="px-6 py-4 text-center">
+                    <button onClick={() => setPrintProduct(product)} className="text-slate-400 hover:text-indigo-600 mr-3" title="พิมพ์บาร์โค้ด">
+                      <Printer className="w-4 h-4" />
+                    </button>
                     <button onClick={() => handleEditClick(product)} className="text-slate-400 hover:text-blue-600 mr-3"><Edit className="w-4 h-4" /></button>
                     <button onClick={() => handleDelete(product.id, product.name)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
                   </td>
@@ -278,6 +326,42 @@ export default function Products() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 🖨️ Modal สำหรับดูตัวอย่างและสั่งพิมพ์บาร์โค้ด */}
+      {printProduct && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between bg-slate-50/50">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <Printer className="w-5 h-5 text-indigo-600" /> ตัวอย่างบาร์โค้ด
+              </h3>
+              <button onClick={() => setPrintProduct(null)} className="text-slate-400 hover:text-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-8 text-center bg-slate-50/30">
+              <div className="bg-white border-2 border-dashed border-slate-200 p-6 rounded-xl inline-block shadow-sm">
+                <p className="font-bold text-slate-800 mb-4">{printProduct.name}</p>
+                <img 
+                  src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${printProduct.sku}&scale=3`} 
+                  alt="Barcode" 
+                  className="mx-auto h-20 opacity-90"
+                />
+                <p className="mt-3 text-slate-500 font-mono tracking-widest font-bold">{printProduct.sku}</p>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-white grid grid-cols-2 gap-3">
+              <button onClick={() => setPrintProduct(null)} className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-medium transition-colors">
+                ยกเลิก
+              </button>
+              <button onClick={handlePrintBarcode} className="py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium shadow-sm shadow-indigo-200 transition-colors flex justify-center items-center gap-2">
+                <Printer className="w-4 h-4" /> สั่งพิมพ์เลย
+              </button>
             </div>
           </div>
         </div>
