@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Package, Plus, Edit, Trash2, X, Tags } from 'lucide-react';
+import { Package, Plus, Edit, Trash2, X, Tags,Download } from 'lucide-react';
 
 export default function Products() {
   const [products, setProducts] = useState([]);
@@ -17,7 +17,7 @@ export default function Products() {
   const [newCategory, setNewCategory] = useState('');
 
   const [formData, setFormData] = useState({
-    sku: '', name: '', category_id: '', min_stock: ''
+    sku: '', name: '', category_id: '', min_stock: '', location: ''
   });
 
   useEffect(() => {
@@ -33,7 +33,13 @@ export default function Products() {
   async function fetchProducts() {
     try {
       setLoading(true);
-      const { data, error } = await supabase.from('products').select(`*, categories(name)`).order('created_at', { ascending: false });
+      // 👇 เพิ่ม .eq('is_active', true) เข้าไปแล้วครับ
+      const { data, error } = await supabase
+        .from('products')
+        .select(`*, categories(name)`)
+        .eq('is_active', true) 
+        .order('created_at', { ascending: false });
+        
       if (error) throw error;
       setProducts(data || []);
     } catch (error) {
@@ -53,15 +59,51 @@ export default function Products() {
   async function handleDelete(id, name) {
     if (!window.confirm(`ลบสินค้า "${name}"?`)) return;
     try {
-      const { error } = await supabase.from('products').delete().eq('id', id);
-      if (error) {
-        if (error.code === '23503') throw new Error('ไม่สามารถลบสินค้านี้ได้ เนื่องจากมีประวัติรับ-จ่ายสต็อกในระบบ');
-        throw error;
-      }
+      // 👇 เปลี่ยนคำสั่งจาก delete() เป็น update() ตรงนี้ครับ
+      const { error } = await supabase
+        .from('products')
+        .update({ is_active: false })
+        .eq('id', id);
+        
+      if (error) throw error;
+      
       fetchProducts();
     } catch (error) {
       alert('Error: ' + error.message);
     }
+  }
+ 
+  // --- ฟังก์ชันส่งออกรายงานเป็นไฟล์ CSV ---
+  function exportToCSV() {
+    // 1. เตรียมหัวตาราง
+    const headers = ['SKU', 'ชื่อสินค้า', 'หมวดหมู่', 'ตำแหน่ง', 'คงเหลือ'];
+    
+    // 2. เตรียมข้อมูลแต่ละบรรทัด
+    const csvRows = products.map(p => {
+      // เอาเครื่องหมายคอมม่า (,) ออกจากชื่อสินค้า/ตำแหน่ง เผื่อพิมพ์ติดมา จะได้ไม่ทำให้ไฟล์พัง
+      const name = p.name ? p.name.replace(/,/g, '') : '';
+      const location = p.location ? p.location.replace(/,/g, '') : '-';
+      const category = p.categories?.name ? p.categories.name.replace(/,/g, '') : '-';
+      
+      return [p.sku, name, category, location, p.current_qty].join(',');
+    });
+
+    // 3. รวมหัวตารางและข้อมูลเข้าด้วยกัน
+    const csvContent = [headers.join(','), ...csvRows].join('\n');
+    
+    // 4. สร้างไฟล์และสั่งดาวน์โหลด (\uFEFF คือ BOM ทำให้ Excel อ่านภาษาไทยออก)
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // ตั้งชื่อไฟล์พร้อมวันที่ปัจจุบัน
+    const dateStr = new Date().toISOString().split('T')[0];
+    link.setAttribute('download', `Stock_Report_${dateStr}.csv`);
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 
   async function handleSubmit(e) {
@@ -69,7 +111,7 @@ export default function Products() {
     setIsSubmitting(true);
     try {
       const payload = {
-        sku: formData.sku, name: formData.name, category_id: formData.category_id || null, min_stock: formData.min_stock === '' ? 5 : parseInt(formData.min_stock),
+        sku: formData.sku, name: formData.name, category_id: formData.category_id || null, min_stock: formData.min_stock === '' ? 5 : parseInt(formData.min_stock),location: formData.location
       };
       if (editId) {
         const { error } = await supabase.from('products').update(payload).eq('id', editId);
@@ -130,6 +172,9 @@ export default function Products() {
           <button onClick={() => setIsCategoryModalOpen(true)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2.5 rounded-xl font-medium transition-all flex items-center gap-2">
             <Tags className="w-5 h-5" /> จัดการหมวดหมู่
           </button>
+          <button onClick={exportToCSV} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200 px-4 py-2.5 rounded-xl font-medium transition-all flex items-center gap-2">
+            <Download className="w-5 h-5" /> Export Excel
+          </button>
           <button onClick={() => { setEditId(null); setFormData({ sku: '', name: '', category_id: '', min_stock: '' }); setIsModalOpen(true); }} className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2.5 rounded-xl font-medium shadow-sm transition-all flex items-center gap-2">
             <Plus className="w-5 h-5" /> เพิ่มสินค้าใหม่
           </button>
@@ -144,6 +189,7 @@ export default function Products() {
                 <th className="px-6 py-4 font-medium">SKU</th>
                 <th className="px-6 py-4 font-medium">ชื่อสินค้า</th>
                 <th className="px-6 py-4 font-medium">หมวดหมู่</th>
+                <th className="px-6 py-4 font-medium">ตำแหน่ง</th>
                 <th className="px-6 py-4 font-medium text-right">คงเหลือ</th>
                 <th className="px-6 py-4 font-medium text-center">จัดการ</th>
               </tr>
@@ -155,6 +201,7 @@ export default function Products() {
                   <td className="px-6 py-4 font-medium text-slate-700">{product.sku}</td>
                   <td className="px-6 py-4 text-slate-800">{product.name}</td>
                   <td className="px-6 py-4"><span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-medium">{product.categories?.name || '-'}</span></td>
+                  <td className="px-6 py-4">{product.location || '-'}</td>
                   <td className="px-6 py-4 text-right"><span className={`font-bold ${product.current_qty <= product.min_stock ? 'text-red-500' : 'text-teal-600'}`}>{product.current_qty}</span></td>
                   <td className="px-6 py-4 text-center">
                     <button onClick={() => handleEditClick(product)} className="text-slate-400 hover:text-blue-600 mr-3"><Edit className="w-4 h-4" /></button>
@@ -178,6 +225,16 @@ export default function Products() {
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div><label className="block text-sm mb-1">SKU *</label><input type="text" required value={formData.sku} onChange={(e) => setFormData({...formData, sku: e.target.value})} className="w-full px-4 py-2 border rounded-xl" /></div>
               <div><label className="block text-sm mb-1">ชื่อสินค้า *</label><input type="text" required value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} className="w-full px-4 py-2 border rounded-xl" /></div>
+              <div>
+                <label className="block text-sm mb-1">ตำแหน่งจัดเก็บ (ตู้/ชั้น)</label>
+                <input 
+                  type="text" 
+                  placeholder="เช่น ตู้ A ชั้น 2"
+                  value={formData.location} 
+                  onChange={(e) => setFormData({...formData, location: e.target.value})} 
+                  className="w-full px-4 py-2 border rounded-xl" 
+                />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm mb-1">หมวดหมู่</label>

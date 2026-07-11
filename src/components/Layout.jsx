@@ -1,30 +1,52 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { LayoutDashboard, Package, ArrowLeftRight, LogOut, Settings as SettingsIcon,Sparkles } from 'lucide-react';
+import { LayoutDashboard, Package, ArrowLeftRight, LogOut, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import Swal from 'sweetalert2';
 
 export default function Layout({ session }) {
   const location = useLocation();
   const userEmail = session?.user?.email || 'user@company.com';
+  
+  // ดึงค่า role จากศูนย์บัญชาการสิทธิ์
+  const { role } = useAuth();
 
+  // 🛡️ [Best Practice]: กรองสิทธิ์เมนูตั้งแต่ระดับ Array 
   const menuItems = [
     { path: '/', name: 'แดชบอร์ด', icon: LayoutDashboard },
-    { path: '/products', name: 'สินค้า', icon: Package },
+    
+    // 🔒 ถ้า role เป็น 'admin' ให้เพิ่มเมนูสินค้าเข้ามา ถ้าไม่ใช่ไม่ต้องเพิ่ม
+    ...(role === 'admin' ? [{ path: '/products', name: 'สินค้า', icon: Package }] : []),
+    
     { path: '/transactions', name: 'รับ-จ่าย', icon: ArrowLeftRight },
     { path: '/ai-scanner', name: 'สแกน AI', icon: Sparkles },
-    { path: '/settings', name: 'ตั้งค่า', icon: SettingsIcon },
+    
+    // 🔒 ซ่อนเมนูตั้งค่า ให้เฉพาะ admin
+    ...(role === 'admin' ? [{ path: '/settings', name: 'ตั้งค่า', icon: SettingsIcon }] : []),
   ];
 
   async function handleLogout() {
-    if (window.confirm('คุณต้องการออกจากระบบใช่หรือไม่?')) {
+    const result = await Swal.fire({
+      title: 'ออกจากระบบ?',
+      text: 'คุณแน่ใจหรือไม่ว่าต้องการออกจากระบบ Stockify?',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#0d9488', // สีเขียว Teal ให้เข้ากับธีม
+      cancelButtonColor: '#ef4444',  // สีแดง
+      confirmButtonText: 'ออกจากระบบ',
+      cancelButtonText: 'ยกเลิก',
+      reverseButtons: true // สลับปุ่มยกเลิกมาไว้ซ้าย (พฤติกรรม UI ที่คนคุ้นเคย)
+    });
+
+    if (result.isConfirmed) {
       await supabase.auth.signOut();
     }
   }
 
   return (
-    // เพิ่ม pb-16 (padding-bottom) ในมือถือเพื่อไม่ให้เนื้อหาโดนเมนูด้านล่างบัง
     <div className="flex h-screen bg-slate-50/50 text-slate-600 antialiased font-sans overflow-hidden">
       
-      {/* 🖥️ Sidebar สำหรับหน้าจอคอมพิวเตอร์ (ซ่อนในมือถือ) */}
+      {/* 🖥️ Sidebar สำหรับหน้าจอคอมพิวเตอร์ */}
       <aside className="w-64 bg-white border-r border-slate-100 flex-col justify-between p-4 hidden md:flex flex-shrink-0 z-20">
         <div className="space-y-6">
           <div className="flex items-center gap-3 px-2 py-3 border-b border-slate-50">
@@ -70,10 +92,9 @@ export default function Layout({ session }) {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
         
-        {/* 📋 Header ด้านบน (ปรับให้เหมาะกับมือถือ) */}
+        {/* 📋 Header ด้านบน */}
         <header className="bg-white border-b border-slate-100 h-16 flex items-center justify-between px-4 md:px-6 flex-shrink-0 z-10">
           <div className="flex items-center gap-2">
-             {/* โชว์โลโก้ในมือถือแทน Sidebar */}
              <div className="md:hidden bg-teal-600 text-white p-1.5 rounded-lg shadow-sm">
                 <Package className="w-5 h-5" />
              </div>
@@ -90,7 +111,6 @@ export default function Layout({ session }) {
             <div className="w-9 h-9 bg-teal-100 text-teal-700 rounded-full flex items-center justify-center font-bold shadow-inner uppercase">
               {userEmail.charAt(0)}
             </div>
-            {/* ปุ่มออกจากระบบ สำหรับหน้าจอมือถือ (เพราะเมนูซ้ายหายไป) */}
             <button 
               onClick={handleLogout} 
               className="md:hidden p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
@@ -101,12 +121,12 @@ export default function Layout({ session }) {
           </div>
         </header>
 
-        {/* 📄 เนื้อหาหน้าเว็บ (เว้นระยะด้านล่างในมือถือไม่ให้เมนูบัง) */}
+        {/* 📄 เนื้อหาหน้าเว็บ */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-24 md:pb-6">
           <Outlet />
         </main>
 
-        {/* 📱 Bottom Navigation สำหรับหน้าจอมือถือโดยเฉพาะ */}
+        {/* 📱 Bottom Navigation สำหรับหน้าจอมือถือ */}
         <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-around items-center h-16 z-50 pb-safe shadow-[0_-5px_10px_-5px_rgba(0,0,0,0.05)]">
           {menuItems.map((item) => {
             const Icon = item.icon;

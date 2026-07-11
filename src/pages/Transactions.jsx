@@ -2,9 +2,11 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { Package, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
 import Swal from 'sweetalert2';
-
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Transactions() {
+  const { user } = useAuth();
+
   const [type, setType] = useState('IN');
   const [quantity, setQuantity] = useState(''); 
   const [sku, setSku] = useState('');
@@ -18,6 +20,8 @@ export default function Transactions() {
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef(null);
   const isSubmitting = useRef(false);
+  
+
 
   useEffect(() => {
     fetchProducts();
@@ -135,7 +139,8 @@ export default function Transactions() {
       await supabase.from('transactions').insert([{
         product_id: product.id,
         transaction_type: type,
-        quantity: parsedQty
+        quantity: parsedQty,
+        user_email: user.email,
       }]);
 
       // 🎯 ดึงค่าแจ้งเตือนขั้นต่ำจากฐานข้อมูล (ถ้าไม่ได้ตั้งไว้ ให้ถือว่าเป็น 0)
@@ -296,6 +301,7 @@ export default function Transactions() {
                       <td className="py-3 px-2">
                         <div className="font-semibold text-slate-800">{tx.products?.name || 'ไม่มีชื่อ'}</div>
                         <div className="text-xs text-slate-400">SKU: {tx.products?.sku}</div>
+                        <div className="text-[10px] text-teal-600 mt-1 font-medium">👤 โดย: {tx.user_email || 'ไม่ระบุ'}</div>
                       </td>
                       <td className="py-3 px-2 text-right">
                         <span className={`inline-flex items-center justify-center px-2.5 py-1 rounded-md text-xs font-bold ${

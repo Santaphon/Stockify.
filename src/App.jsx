@@ -8,6 +8,16 @@ import Transactions from './pages/Transactions';
 import Login from './pages/Login';
 import Settings from './pages/Settings';
 import AiScanner from './pages/AiScanner';
+import { useAuth } from './contexts/AuthContext';
+
+const AdminRoute = ({ children }) => {
+  const { role, loading } = useAuth();
+  
+  if (loading) return <div>Loading...</div>; // รอเช็คสิทธิ์แป๊บนึง
+  if (role !== 'admin') return <Navigate to="/" replace />; // ไม่ใช่แอดมิน เตะกลับไป!
+  
+  return children;
+};
 
 function App() {
   const [session, setSession] = useState(null);
@@ -45,12 +55,22 @@ function App() {
         ) : (
           /* หากล็อกอินแล้ว ให้เข้าถึงเส้นทางทั้งหมดในระบบได้ปกติ */
           <Route path="/" element={<Layout session={session} />}>
-            <Route index element={<Dashboard />} />
-            <Route path="products" element={<Products />} />
+          <Route index element={<Dashboard />} />
+            {/* 🔒 ล็อกประตูหน้าสินค้า */}
+          <Route path="products" element={
+            <AdminRoute>
+              <Products />
+            </AdminRoute>
+          } />
             <Route path="ai-scanner" element={<AiScanner />} />
             <Route path="transactions" element={<Transactions />} />
             {/* ป้องกันคนพิมพ์ URL มั่วให้เด้งกลับหน้าแรก */}
-            <Route path="settings" element={<Settings />} />
+            {/* 🔒 ล็อกประตูหน้าตั้งค่า */}
+          <Route path="settings" element={
+            <AdminRoute>
+              <Settings />
+            </AdminRoute>
+          } />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         )}
