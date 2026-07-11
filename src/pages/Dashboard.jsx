@@ -24,7 +24,7 @@ export default function Dashboard() {
       setLoading(true);
       
       // 1. ดึงข้อมูลสถิติทั่วไป (เหมือนเดิม)
-      const { count: productCount } = await supabase.from('products').select('*', { count: 'exact', head: true });
+      const { count: productCount } = await supabase.from('products').select('*', { count: 'exact', head: true } ).eq('is_active', true);
       
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -32,7 +32,7 @@ export default function Dashboard() {
         .select('*', { count: 'exact', head: true })
         .gte('created_at', today.toISOString());
 
-      const { data: lowStockData } = await supabase.from('products').select('id').filter('current_qty', 'lte', 5);
+      const { data: lowStockData } = await supabase.from('products').select('id').eq('is_active', true).filter('current_qty', 'lte', 5);
 
       const { data: recentTx } = await supabase.from('transactions')
         .select(`*, products(name)`)
@@ -212,6 +212,7 @@ export default function Dashboard() {
                       <td className="px-6 py-4">
                         <p className="font-medium text-slate-800 text-sm">{activity.products?.name}</p>
                         <p className="text-xs text-slate-400 mt-1">{new Date(activity.created_at).toLocaleString('th-TH')}</p>
+                        <p className="text-[10px] text-teal-600 mt-1 font-medium">👤 {activity.user_email || 'ระบบ'}</p>
                       </td>
                       <td className="px-6 py-4 text-right">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${

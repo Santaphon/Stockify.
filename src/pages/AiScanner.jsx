@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Sparkles, Upload, FileText, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Sparkles, Upload, FileText, CheckCircle2, RefreshCw,X } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function AiScanner() {
+  const { user } = useAuth();
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [scannedData, setScannedData] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [successMsg, setSuccessMsg] = useState(null);
 
   // 1. แปลงไฟล์รูปภาพให้อยู่ในฟอร์แมตที่ Gemini อ่านได้ (Base64)
   const fileToGenerativePart = async (file) => {
@@ -83,11 +86,12 @@ export default function AiScanner() {
     if (!scannedData) return;
     setIsSaving(true);
     try {
-      // ค้นหาดูก่อนว่ามีสินค้า SKU นี้ในระบบคลังเราหรือยัง
+      // 👇 อัปเดต: ค้นหาดูก่อนว่ามีสินค้า SKU นี้ในระบบคลังเราหรือยัง (และต้องยังไม่ถูกลบ)
       const { data: existingProduct } = await supabase
         .from('products')
         .select('*')
         .eq('sku', scannedData.sku.toUpperCase())
+        .eq('is_active', true) // 👈 เพิ่มตัวกรอง Soft Delete ตรงนี้
         .single();
 
       let productId = null;
@@ -95,23 +99,16 @@ export default function AiScanner() {
 
       if (existingProduct) {
         productId = existingProduct.id;
-        currentQty = existingProduct.current_qty;
-        
-        // ถ้ามีสินค้าแล้ว ให้บวกสต็อกเพิ่มเข้าไป
-        const { error: updateError } = await supabase
-          .from('products')
-          .update({ current_qty: currentQty + scannedData.quantity })
-          .eq('id', productId);
-        if (updateError) throw updateError;
+        // ลบคำสั่ง update products ทิ้งไปเลย ปล่อยให้ Trigger ของฐานข้อมูลทำหน้าที่บวกเลขแทน
       } else {
-        // ถ้ายังไม่มีสินค้าชิ้นนี้ ให้สร้างสินค้าใหม่ในคลังเลย!
         const { data: newProd, error: insertError } = await supabase
           .from('products')
           .insert([{
             sku: scannedData.sku.toUpperCase(),
             name: scannedData.product_name,
-            current_qty: scannedData.quantity,
+            current_qty: 0, // 👈 เปลี่ยนให้สินค้าใหม่เริ่มต้นที่ 0 ชิ้นเสมอ (เดี๋ยว Trigger เอาไปบวกให้เอง)
             min_stock: 5
+            // 💡 หมายเหตุ: หากต้องการให้ AI เดา Location ด้วย สามารถเพิ่มช่อง location ตรงนี้ได้ในอนาคต
           }])
           .select()
           .single();
@@ -119,16 +116,23 @@ export default function AiScanner() {
         productId = newProd.id;
       }
 
-      // บันทึกประวัติประวัติรับเข้าสต็อก
+      // 👇 อัปเดต: บันทึกประวัติรับเข้าสต็อก พร้อมแนบอีเมลผู้ใช้งาน (Audit Log)
       const { error: txError } = await supabase.from('transactions').insert([{
         product_id: productId,
         transaction_type: 'IN',
-        quantity: scannedData.quantity
+        quantity: scannedData.quantity,
+        user_email: user.email // 👈 เพิ่มบรรทัดนี้เพื่อให้ระบุตัวตนคนทำรายการ
       }]);
       if (txError) throw txError;
 
-      alert(`🎉 บันทึกเข้าคลังสินค้าสำเร็จ!\nเพิ่ม "${scannedData.product_name}" จำนวน ${scannedData.quantity} ชิ้น เรียบร้อยครับ`);
-      // เคลียร์ค่าหน้าจอ
+      // 👇 ใช้ State แทน alert
+      setSuccessMsg(`เพิ่ม "${scannedData.product_name}" จำนวน ${scannedData.quantity} ชิ้น เรียบร้อยครับ`);
+      
+      // 👇 สั่งให้ป๊อปอัปหายไปเองใน 4 วินาที
+      setTimeout(() => {
+        setSuccessMsg(null);
+      }, 4000);
+
       setImage(null);
       setImagePreview(null);
       setScannedData(null);
@@ -141,6 +145,21 @@ export default function AiScanner() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-12">
+      {/* 🟢 ป๊อปอัปแจ้งเตือน (Toast) */}
+      {successMsg && (
+        <div className="fixed top-6 right-6 bg-white border-l-4 border-emerald-500 shadow-2xl rounded-xl p-4 flex items-start gap-4 z-50 animate-in slide-in-from-right-8 fade-in duration-300">
+          <div className="bg-emerald-100 p-1.5 rounded-full mt-0.5">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+          </div>
+          <div className="pr-6">
+            <h4 className="font-bold text-slate-800 text-sm">บันทึกเข้าคลังสินค้าสำเร็จ! 🎉</h4>
+            <p className="text-sm text-slate-500 mt-1">{successMsg}</p>
+          </div>
+          <button onClick={() => setSuccessMsg(null)} className="text-slate-400 hover:text-slate-600 transition-colors absolute top-4 right-4">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
         <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
           <Sparkles className="text-teal-600 fill-teal-100" /> สแกนบิลด้วย AI Vision
